@@ -26,12 +26,17 @@ namespace ODOLauncher.ViewModels
         private const string ExeFolder = "bin64";
         private const string GameExe = "BlackDesert64.exe";
 
+        private readonly CancellationTokenSource _ctSource = new CancellationTokenSource();
+
         public void Initialize(MainWindow mv = null)
         {
             try
             {
                 _mainWindow = mv;
-                _updater = new Updater(this, OnDownloadStart, OnDownloadProgress, OnDownloadComplete, OnError);
+                _updater = new Updater(this, OnDownloadStart, OnDownloadProgress, OnDownloadComplete, OnError)
+                {
+                    Token = _ctSource.Token
+                };
                 LoadLocalSettings();
                 BeginPatch();
             }
@@ -50,6 +55,7 @@ namespace ODOLauncher.ViewModels
                 Thread.Sleep(500);
                 await _updater.UpdateLauncher(RemoteSettings);
                 await _updater.UpdateClient(RemoteSettings);
+                Status = "Client up to date! Start Playing!";
             }
             catch (FileNotFoundException e)
             {
@@ -81,6 +87,9 @@ namespace ODOLauncher.ViewModels
 
             if (result != MessageDialogResult.Affirmative) return;
 
+            _ctSource.Cancel();
+            Thread.Sleep(100);
+
             Application.Current.Shutdown();
         }
 
@@ -98,7 +107,7 @@ namespace ODOLauncher.ViewModels
                 IsEnabledLaunch = true;
                 return;
             }
-            
+
             SaveLocalSetting();
             try
             {
@@ -139,7 +148,7 @@ namespace ODOLauncher.ViewModels
             LocalConfig.Load(LocalSettings);
             _updater.LastPatchId = LocalSettings.LastPatchId;
             if (!LocalSettings.Save) return;
-            Login = LocalSettings.Login;
+            Login = LocalSettings.Login.Trim();
             Password = Encoder.Decode(LocalSettings.Password);
             Save = LocalSettings.Save;
         }
@@ -147,8 +156,8 @@ namespace ODOLauncher.ViewModels
         private void SaveLocalSetting()
         {
             LocalSettings.LastPatchId = _updater.LastPatchId;
-            LocalSettings.Login = Login;
-            LocalSettings.Password = Encoder.Encode(Password);
+            LocalSettings.Login = Login.Trim();
+            LocalSettings.Password = Encoder.Encode(Password.Trim());
             LocalSettings.Save = Save;
             LocalConfig.Save(LocalSettings);
         }
@@ -291,14 +300,13 @@ namespace ODOLauncher.ViewModels
 
         private void OnDownloadProgress(DownloaderMetric metric)
         {
-            Status = $"Downloading {metric.FileName} ({metric.Speed / 1024:0.00} MB/s)";
+            Status = $"Downloading {metric.FileName} ({metric.SpeedInMb:0.00} MB/s)";
             CProgress = metric.Progress;
         }
 
         private void OnDownloadComplete(DownloaderMetric metric)
         {
             IsEnabledLaunch = true;
-            Status = $"Update complete!";
         }
 
         private void OnError(Exception ex)
@@ -311,6 +319,7 @@ namespace ODOLauncher.ViewModels
         #region Commands
 
         private ICommand _cmdStartGame;
+
         // ReSharper disable once UnusedMember.Global
         public ICommand CmdStartGame => _cmdStartGame ??= new RelayCommand(LaunchClient);
 

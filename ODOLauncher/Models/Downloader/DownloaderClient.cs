@@ -18,102 +18,14 @@ namespace ODOLauncher.Models.Downloader
         public event DownloadEventHandler OnDownloadCompleted;
         public event DownloadErrorEventHandler OnError;
 
-        public void DownloadToFile(Uri uri, string folderPath, string filename)
+        public async Task DownloadToFileAsync(Uri uri, string folderPath, string filename,
+            CancellationToken ct = default)
         {
             filename ??= Path.GetFileName(uri.ToString());
             folderPath ??= Directory.GetCurrentDirectory();
-            ProcessDownload(uri, Path.Combine(folderPath, filename), CancellationToken.None);
+            await ProcessDownloadAsync(uri, Path.Combine(folderPath, filename), ct);
         }
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "RCS1090:Call 'ConfigureAwait(false)'.",
-            Justification = "<Ожидание>")]
-        public async Task DownloadToFileAsync(Uri uri, string folderPath, string filename)
-        {
-            filename ??= Path.GetFileName(uri.ToString());
-            folderPath ??= Directory.GetCurrentDirectory();
-            await ProcessDownloadAsync(uri, Path.Combine(folderPath, filename), CancellationToken.None);
-        }
-
-        public string GetLogin(Uri uri)
-        {
-            return string.IsNullOrWhiteSpace(uri.UserInfo) ? string.Empty : uri.UserInfo.Split(':')[0];
-        }
-
-        public string GetPassword(Uri uri)
-        {
-            return string.IsNullOrWhiteSpace(uri.UserInfo) ? string.Empty : uri.UserInfo.Split(':')[1];
-        }
-
-        private void ProcessDownload(Uri uri, string filename, CancellationToken ct)
-        {
-            try
-            {
-                dynamic request = null;
-
-                #region Get file size
-
-                if (uri.Scheme == Uri.UriSchemeHttp)
-                {
-                    request = WebRequest.Create(uri) as HttpWebRequest;
-                    request!.Method = WebRequestMethods.Http.Head;
-                }
-                else if (uri.Scheme == Uri.UriSchemeFtp)
-                {
-                    request = WebRequest.Create(uri) as FtpWebRequest;
-                    request!.Method = WebRequestMethods.Ftp.GetFileSize;
-                }
-
-                var metric = new DownloaderMetric {FileName = filename};
-
-                using (var response = request!.GetResponse())
-                {
-                    metric.TotalBytes = response.ContentLength;
-                }
-
-                #endregion
-
-                #region Read Content Stream
-
-                if (uri.Scheme == Uri.UriSchemeHttp)
-                {
-                    request = WebRequest.Create(uri) as HttpWebRequest;
-                    request!.Method = WebRequestMethods.Http.Get;
-                    request.AddRange(0, metric.TotalBytes);
-                }
-                else if (uri.Scheme == Uri.UriSchemeFtp)
-                {
-                    request = WebRequest.Create(uri) as FtpWebRequest;
-                    request!.Method = WebRequestMethods.Ftp.DownloadFile;
-                }
-
-                var stopwatch = new Stopwatch();
-                stopwatch.Start();
-                OnDownloadStart?.Invoke(metric);
-                if (!Directory.Exists(Path.GetDirectoryName(filename)))
-                    Directory.CreateDirectory(Path.GetDirectoryName(filename)!);
-                var fileStream = File.Open(filename, FileMode.Create, FileAccess.ReadWrite);
-                var streamReader = new StreamReader(request.GetResponse().GetResponseStream()!);
-                FromReaderToFile(streamReader, fileStream, ref metric, ref stopwatch, ct);
-                OnDownloadCompleted?.Invoke(metric);
-                stopwatch.Stop();
-
-                #endregion
-            }
-            catch (OperationCanceledException)
-            {
-                const string msg = "Download cancelled by user";
-                OnError?.Invoke(new DownloaderClientException(msg));
-            }
-            catch (Exception ex)
-            {
-                const string msg = "An unexpected error occurred.";
-                OnError?.Invoke(
-                    new DownloaderClientException($"{msg}\n\nDownload failed. See inner exception for details.", ex));
-            }
-        }
-
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "RCS1090:Call 'ConfigureAwait(false)'.",
-            Justification = "<Ожидание>")]
         private async Task ProcessDownloadAsync(Uri uri, string filename, CancellationToken ct)
         {
             try
@@ -145,28 +57,47 @@ namespace ODOLauncher.Models.Downloader
 
                 #endregion
 
+                // Set start download position
+                long startPos = 0;
+                var fi = new FileInfo(filename);
+                if (fi.Exists)
+                {
+                    if (metric.TotalBytes > fi.Length)
+                    {
+                        metric.DownloadedBytes = startPos = fi.Length - 1024;
+                    }
+                    else if (metric.TotalBytes == fi.Length)
+                        return;
+                }
+
                 #region Read Content Stream Asynchronously
 
                 if (uri.Scheme == Uri.UriSchemeHttp)
                 {
                     request = WebRequest.Create(uri) as HttpWebRequest;
+                    request = (HttpWebRequest) request;
                     request!.Method = WebRequestMethods.Http.Get;
-                    request.AddRange(0, metric.TotalBytes);
+                    request.AddRange(startPos, metric.TotalBytes);
                 }
                 else if (uri.Scheme == Uri.UriSchemeFtp)
                 {
                     request = WebRequest.Create(uri) as FtpWebRequest;
                     request!.Method = WebRequestMethods.Ftp.DownloadFile;
+                    request.ContentOffset = startPos;
                 }
 
                 var stopwatch = new Stopwatch();
                 stopwatch.Start();
                 if (!Directory.Exists(Path.GetDirectoryName(filename)))
                     Directory.CreateDirectory(Path.GetDirectoryName(filename)!);
-                var fileStream = new FileStream(filename, FileMode.Create, FileAccess.ReadWrite);
+                var fileStream = new FileStream(filename, FileMode.OpenOrCreate, FileAccess.ReadWrite)
+                {
+                    Position = metric.DownloadedBytes
+                };
                 await Task.Run(async () =>
                 {
-                    ct.ThrowIfCancellationRequested();
+                    if (ct.IsCancellationRequested)
+                        return;
 
                     using var streamReader = new StreamReader((await request.GetResponseAsync()).GetResponseStream());
                     OnDownloadStart?.Invoke(metric);
@@ -199,13 +130,10 @@ namespace ODOLauncher.Models.Downloader
             {
                 if (ct.IsCancellationRequested)
                 {
-                    dest.SetLength(0);
+                    dest.Flush(true);
                     dest.Close();
-
-                    if (File.Exists(dest.Name))
-                        File.Delete(dest.Name);
-
-                    ct.ThrowIfCancellationRequested();
+                    dest.Dispose();
+                    return;
                 }
 
                 dest.Write(buffer, 0, bytesRead);

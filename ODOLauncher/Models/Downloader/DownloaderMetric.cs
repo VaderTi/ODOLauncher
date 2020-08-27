@@ -13,25 +13,15 @@ namespace ODOLauncher.Models.Downloader
         /// Initializes a download metric.
         /// </summary>
         /// <param name="totalBytes"></param>
-        /// <param name="timeInSeconds">
-        ///     Perform calculation using time in seconds or in milliseconds?
-        /// </param>
-        public DownloaderMetric(long? totalBytes = null, bool timeInSeconds = true)
+        public DownloaderMetric(long? totalBytes = null)
         {
             FileName = string.Empty;
-            TimeInSeconds = timeInSeconds;
             DownloadedBytes = 0;
             TotalBytes = totalBytes ?? int.MaxValue;
             ElapsedTime = new TimeSpan();
         }
 
         public string FileName { get; set; }
-
-        /// <summary>
-        /// Checks whether the time measurement/calculation unit is seconds
-        /// or milliseconds. 
-        /// </summary>
-        public bool TimeInSeconds { get; }
 
         /// <summary>
         /// Received/Downloaded Bytes. (d)
@@ -75,12 +65,6 @@ namespace ODOLauncher.Models.Downloader
         public long RemainingBytes => TotalBytes - DownloadedBytes;
 
         /// <summary>
-        /// Checks if the download is complete by looking at the size
-        /// of remaining/pending bytes.
-        /// </summary>
-        public bool IsComplete => RemainingBytes <= 0;
-
-        /// <summary>
         /// Elapsed time at the current moment. (t)
         /// </summary>
         public TimeSpan ElapsedTime { get; set; }
@@ -92,8 +76,7 @@ namespace ODOLauncher.Models.Downloader
         ///     = (d / t);
         /// </code>.
         /// 
-        /// The result is in (bytes/sec) or (bytes/ms) depending on the unit
-        /// chosen for representing time.
+        /// The result is in (bytes/sec)
         /// </summary>
         public double Speed
         {
@@ -101,9 +84,7 @@ namespace ODOLauncher.Models.Downloader
             {
                 try
                 {
-                    return TimeInSeconds
-                        ? (DownloadedBytes / ElapsedTime.TotalSeconds)
-                        : (DownloadedBytes / ElapsedTime.TotalMilliseconds);
+                    return (DownloadedBytes / ElapsedTime.TotalSeconds);
                 }
                 catch (DivideByZeroException)
                 {
@@ -111,6 +92,10 @@ namespace ODOLauncher.Models.Downloader
                 }
             }
         }
+
+        public double SpeedInKb => Speed / 1024;
+
+        public double SpeedInMb => SpeedInKb / 1024;
 
         /// <summary>
         /// Expiration or time remaining for download to complete. (e)
@@ -124,8 +109,7 @@ namespace ODOLauncher.Models.Downloader
             {
                 try
                 {
-                    var d = RemainingBytes / Speed;
-                    return TimeInSeconds ? TimeSpan.FromSeconds(d) : TimeSpan.FromMilliseconds(d);
+                    return TimeSpan.FromSeconds(RemainingBytes / Speed);
                 }
                 catch (DivideByZeroException)
                 {

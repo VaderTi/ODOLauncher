@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ODOLauncher.Models.Downloader
@@ -29,22 +30,13 @@ namespace ODOLauncher.Models.Downloader
         event DownloadErrorEventHandler OnError;
 
         /// <summary>
-        /// Downloads a file from the server and saves it to the application folder.
-        /// </summary>
-        /// <param name="uri">The path to the downloaded resource.</param>
-        /// <param name="filename">The name of the saved file.</param>
-        /// <param name="folderPath">Saved file folder.</param>
-        void DownloadToFile(Uri uri, string folderPath = null, string filename = null);
-
-        /// <summary>
         /// Asynchronously downloads a file from the server and saves it to the application folder.
         /// </summary>
         /// <param name="uri">The path to the downloaded resource.</param>
         /// <param name="filename">The name of the saved file.</param>
         /// <param name="folderPath">Saved file folder.</param>
-        Task DownloadToFileAsync(Uri uri, string folderPath = null, string filename = null);
-
-        string GetLogin(Uri uri);
-        string GetPassword(Uri uri);
+        /// <param name="token"><see cref="CancellationToken"/></param>
+        Task DownloadToFileAsync(Uri uri, string folderPath = null, string filename = null,
+            CancellationToken token = default);
     }
 }

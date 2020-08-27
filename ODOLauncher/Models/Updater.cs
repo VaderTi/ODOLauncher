@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using ODOLauncher.Models.Settings;
 using ODOLauncher.ViewModels;
@@ -16,6 +17,7 @@ namespace ODOLauncher.Models
         public string PatchName { get; set; }
         public string PatchFolder { get; set; }
     }
+
     public class Updater
     {
         private static MainViewModel _mainView;
@@ -23,7 +25,9 @@ namespace ODOLauncher.Models
         public int LastPatchId { get; set; }
         public bool IsUpdating { get; private set; }
 
-        public Updater(MainViewModel mainView,DownloadEventHandler onDownloadStart, DownloadEventHandler onDownloading,
+        public CancellationToken Token;
+
+        public Updater(MainViewModel mainView, DownloadEventHandler onDownloadStart, DownloadEventHandler onDownloading,
             DownloadEventHandler onDownloadCompleted, DownloadErrorEventHandler onError)
         {
             _mainView = mainView;
@@ -37,7 +41,7 @@ namespace ODOLauncher.Models
         public async Task GetRemoteConfig(string configUrl, string configFile, RemoteSettings remoteConfig)
         {
             IsUpdating = true;
-            await _dlClient.DownloadToFileAsync(new Uri(configUrl + configFile));
+            await _dlClient.DownloadToFileAsync(new Uri(configUrl + configFile), null, null, Token);
             RemoteConfig.LoadConfig(remoteConfig, configFile);
             IsUpdating = false;
         }
@@ -53,7 +57,7 @@ namespace ODOLauncher.Models
             if (launcherVersion.CompareTo(settings.LauncherVersion) == -1)
             {
                 File.Move(launcherName, launcherName + ".old");
-                await _dlClient.DownloadToFileAsync(new Uri(settings.LauncherUrl));
+                await _dlClient.DownloadToFileAsync(new Uri(settings.LauncherUrl), null, null, Token);
                 var psi = new ProcessStartInfo
                 {
                     FileName = launcherName,
@@ -70,7 +74,7 @@ namespace ODOLauncher.Models
         {
             IsUpdating = true;
 
-            await _dlClient.DownloadToFileAsync(new Uri(settings.PatchListUrl));
+            await _dlClient.DownloadToFileAsync(new Uri(settings.PatchListUrl), null, null, Token);
 
             string line;
             var streamReader = new StreamReader(Path.GetFileName(settings.PatchListUrl));
@@ -84,12 +88,13 @@ namespace ODOLauncher.Models
                 {
                     case 2:
                     {
-                        patches.Add(new Patch(){PatchId = int.Parse(patch[0]), PatchName = patch[1]});
+                        patches.Add(new Patch() {PatchId = int.Parse(patch[0]), PatchName = patch[1]});
                         break;
                     }
                     case 3:
                     {
-                        patches.Add(new Patch(){PatchId = int.Parse(patch[0]), PatchName = patch[1], PatchFolder = patch[2]});
+                        patches.Add(new Patch()
+                            {PatchId = int.Parse(patch[0]), PatchName = patch[1], PatchFolder = patch[2]});
                         break;
                     }
                     default:
@@ -107,13 +112,21 @@ namespace ODOLauncher.Models
             {
                 for (var i = 0; i < patches.Count; i++)
                 {
-                    double progress = (double)(i+1) / patches.Count * 100;
+                    var progress = (double) (i + 1) / patches.Count * 100;
                     _mainView.Progress = progress;
                     string folder = null;
                     if (!string.IsNullOrWhiteSpace(patches[i].PatchFolder))
                         folder = patches[i].PatchFolder;
 
-                    await _dlClient.DownloadToFileAsync(new Uri(settings.PatchesUrl + patches[i].PatchName), folder);
+                    await _dlClient.DownloadToFileAsync(new Uri(settings.PatchesUrl + patches[i].PatchName), folder,
+                        null, Token);
+
+                    if (Token.IsCancellationRequested)
+                    {
+                        IsUpdating = false;
+                        return;
+                    }
+
                     LastPatchId = patches[i].PatchId;
                 }
             }
